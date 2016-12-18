@@ -5,10 +5,64 @@ import zlib
 
 Tags = {0: "End",
 	1: "ShowFrame",
+	2: "DefineShape",
+	4: "PlaceObject",
+	5: "RemoveObject",
+	6: "DefineBits",
+	8: "JPEGTables",
+	9: "SetBackgroundColor",
+	10: "DefineFont",
+	12: "DoAction",
+	13: "DefineFontInfo",
+	20: "DefineBitsLossless",
+	21: "DefineBitsJPEG2",
+	22: "DefineShare2",
+	24: "Protect",
+	26: "PlaceObject2",
+	28: "RemoveObject2",
+	32: "DefineShape3",
+	35: "DefineBitsJPEG3",
+	36: "DefineBitsLossless2",
+	41: "ProductInfo",
+	43: "FrameLabel",
+	46: "DefineMorphShape",
+	56: "ExportAssets",
+	57: "ImportAssets",
+	58: "EnableDebugger",
+	59: "DoInitAction", 	#SWF 6
+	64: "EnableDebugger2",
+	65: "ScriptLimits",
+	66: "SetTabIndex",
 	69: "FileAttributes",
-	87: "BinaryData"}
+	70: "PlaceObject3",
+	71: "ImportAssets2",
+	76: "SymbolClass",
+	77: "MetaData",
+	78: "DefineScalingGrid",
+	82: "DoABC", 		#SWF 9  AS3
+	83: "DefineShape4",
+	84: "DefineMorphShape2",
+	86: "DefineSceneAndFrameLabelData",
+	87: "BinaryData",
+	90: "DefineBitsJPEG4"}
 	
+Actions = {
+	0x04: "ActionNextFrame",
+	0x05: "ActionPreviousFrame",
+	0x06: "ActionPlay",
+	0x07: "ActionStop",
+	0x08: "ActionToggleQuality",
+	0x81: "ActionGotoFrame",
+	0x83: "ActionGetURL"}
 
+
+class ACTIONRECORD():
+	def __init__(self,data):
+		self.ActionCode = struct.unpack('<B', data)[0]
+		if self.ActionCode >= 0x80:
+			self.Length = struct.unpack_from('<H', data[1:])[0]
+		else:
+			self.Length = 0
 
 class RECORDHEADER():
 	def __init__(self,ushort):
@@ -75,6 +129,10 @@ class SWF():
 			if self.TagList[i].TagName == "BinaryData":
 				blobs.append(self.TagList[i].TagData[6:])
 		return blobs
+	
+	def printTagNames(self):
+		for tag in self.TagList:
+			print(tag.TagName)
 
 
 	def __str__(self):
