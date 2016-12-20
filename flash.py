@@ -1,6 +1,7 @@
 import struct
 import sys
-import bitstring 
+import bitstring
+import binascii
 import zlib
 
 Tags = {0: "End",
@@ -47,14 +48,117 @@ Tags = {0: "End",
 	90: "DefineBitsJPEG4"}
 	
 Actions = {
+	0x00: "ActionEnd",
 	0x04: "ActionNextFrame",
 	0x05: "ActionPreviousFrame",
 	0x06: "ActionPlay",
 	0x07: "ActionStop",
 	0x08: "ActionToggleQuality",
+	0x09: "ActionStopSounds",
 	0x81: "ActionGotoFrame",
-	0x83: "ActionGetURL"}
+	0x83: "ActionGetURL",
+	0x8a: "ActionWaitForFrame",
+	0x8b: "ActionSetTarget",
+	0x8c: "ActionGoToLabel",
+	#SWF4
+	0x96: "ActionPush",
+	0x17: "ActionPop",
+	0x0a: "ActionAdd",
+	0x0b: "ActionSubtract",
+	0x0c: "ActionMultiple",
+	0x0d: "ActionDivide",
+	0x0e: "ActionEquals",
+	0x0f: "ActionLess",
+	0x10: "ActionAnd",
+	0x11: "ActionOr",
+	0x12: "ActionNot",
+	0x13: "ActionStringEquals",
+	0x14: "ActionStringLength",
+	0x21: "ActionStringAdd",
+	0x15: "ActionStringExtract",
+	0x29: "ActionStringLess",
+	0x31: "ActionMBStringLength",
+	0x35: "ActionMBStringExtract",
+	0x18: "ActionToInteger",
+	0x32: "ActionCharToAscii",
+	0x33: "ActionAsciiToChar",
+	0x36: "ActionMBCharToAscii",
+	0x37: "ActionMBAsciiToChar",
+	0x99: "ActionJump",
+	0x9d: "ActionIf",
+	0x9e: "ActionCall",
+	0x1c: "ActionGetVariable",
+	0x1d: "ActionSetVariable",
+	#MovieControl
+	0x9a: "ActionGetURL2",
+	0x9f: "ActionGotoFrame2",
+	0x20: "ActionSetTarget2",
+	0x22: "ActionGetProperty",
+	0x23: "ActionSetProperty",
+	0x24: "ActionCloneSprite",
+	0x25: "ActionRemoveSprite",
+	0x27: "ActionStartDrag",
+	0x28: "ActionEndDrag",
+	0x8d: "ActionWaitForFrame2",
+	0x26: "ActionTrace",
+	0x34: "ActionGetTime",
+	0x30: "ActionRandomNumber",
+	#SWF5
+	0x3d: "ActionCallFunction"}
 
+#Takes actionCode and data
+#Returns a tuple of bytes processed and a list of explanation strings
+def action_parser(ac,data):
+	retval = []
+	if ac == 0x81:
+		frame_index = struct.unpack_from('<H', data)[0]
+		retval.append("GoTo Frame "+str(frame_index))
+	elif ac == 0x83:
+		urlstring = data.split('\x00')[0]
+		targetstring = data.split('\x00')[1]
+		retval.append("Get URL "+str(urlstring) + ' '+str(targetstring))
+	elif ac == 0x04:
+		retval.append("GoTo Next Frame")
+	elif ac == 0x05:
+		retval.append("GoTo Prev Frame")
+	elif ac == 0x06:
+		retval.append("Start Playing")
+	elif ac == 0x07:
+		retval.append("Stop Playing")
+	elif ac == 0x08:
+		retval.append("Toggle Quality")
+	elif ac == 0x09:
+		retval.append("Stop Sound")
+	elif ac == 0x8a:
+		(frame,skipcount,) = struct.unpack_from("<HB", data)
+		retval.append("Wait for Frame "+str(frame)+" or skip "+str(skipcount)+" actions")
+	elif ac == 0x96:
+		actionType = struct.unpack_from('<B', data)[0]
+		if actionType == 0:
+			val = data.split('\x00')[0]
+		elif actionType == 1:
+			val = struct.unpack_from('<f', data[1:])[0]
+		elif actionType == 4:
+			temp = struct.unpack_from('<B', data[1:])[0]
+			val = "Register "+str(temp)
+		elif actionType == 5:
+			val = struct.unpack_from('<B', data[1:])[0]
+			if val == 0:
+				val = "False"
+			else:
+				val = "True"
+		elif actionType == 6:
+			val = struct.unpack_from('<d', data[1:])[0]
+		elif actionType == 7:
+			val = struct.unpack_from('<I', data[1:])[0]
+		elif actionType == 8:
+			val = struct.unpack_from('<B', data[1:])[0]
+			val = "Constant8 "+str(val)
+		elif actionType == 9:
+			val = struct.unpack_from('<H', data[1:])[0]
+			val = "Constant16 "+str(val)
+		retval.append("Push "+str(val))
+	return retval
 
 class ACTIONRECORD():
 	def __init__(self,data):
@@ -63,6 +167,13 @@ class ACTIONRECORD():
 			self.Length = struct.unpack_from('<H', data[1:])[0]
 		else:
 			self.Length = 0
+		if self.ActionCode in Actions.keys():
+			self.Name = Actions[self.ActionCode]
+			temp = action_parser(self.ActionCode,data[3:])
+			
+		else:
+			self.Name = "Unknown"
+		
 
 class RECORDHEADER():
 	def __init__(self,ushort):
@@ -70,6 +181,12 @@ class RECORDHEADER():
 		self.TagType = temp.read(10).uint
 		self.TagLength = temp.read(6).uint
 		self.length = 0
+
+class DoABC():
+	def __init__(self,data):
+		self.Flags = data[:4]
+		self.Name = data[4:].split('\x00')[0]
+		self.ABCData = data[4+len(self.Name)+1:]
 
 class SWFTag():
 	def __init__(self,data):
@@ -88,6 +205,19 @@ class SWFTag():
 		else:
 			self.TagName = Tags[self.Header.TagType]
 		self.TagData = data[self.tot_size:self.tot_size+self.Header.length]
+		#Check if it's an action
+		if self.Header.TagType in [12]:
+			index = 0
+			self.Actions = []
+			action = ACTIONRECORD(self.TagData)
+			while action.ActionCode != 0:
+				self.Actions.append(action)
+				index += 3
+				index += action.Length
+				action = ACTIONRECORD(self.TagData[index:])
+		#DoABC
+		if self.Header.TagType in [82]:
+			self.Special = DoABC(self.TagData)
 
 class SWF():
 	def __init__(self, data):
@@ -134,6 +264,12 @@ class SWF():
 		for tag in self.TagList:
 			print(tag.TagName)
 
+	def printDoABC(self):
+		for tag in self.TagList:
+			if tag.Header.TagType == 82:
+				print("Flags: "+binascii.hexlify(tag.Special.Flags))
+				print("Name: "+tag.Special.Name)
+				print("ABCData: "+binascii.hexlify(tag.Special.ABCData))
 
 	def __str__(self):
 		ret = "Signature: "+self.Signature
@@ -149,3 +285,7 @@ class SWF():
 data = open(sys.argv[1],'rb').read()
 flash = SWF(data=data)
 print(flash)
+print("\nTags:")
+flash.printTagNames()
+print("\nDoABC:")
+flash.printDoABC()
